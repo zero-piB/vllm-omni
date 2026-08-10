@@ -17,9 +17,12 @@ from vllm_omni.model_executor.stage_input_processors.minicpmo_4_5_omni import (
 pytestmark = [pytest.mark.core_model, pytest.mark.cpu]
 
 
-def _manager():
+def _manager(initial: int = 0):
+    extra = {"codec_chunk_frames": 25, "codec_left_context_frames": 3}
+    if initial:
+        extra["initial_codec_chunk_frames"] = initial
     return SimpleNamespace(
-        connector=SimpleNamespace(config={"extra": {"codec_chunk_frames": 25, "codec_left_context_frames": 3}}),
+        connector=SimpleNamespace(config={"extra": extra}),
         code_prompt_token_ids=defaultdict(list),
         request_payload={},
         put_req_chunk=defaultdict(int),
@@ -101,6 +104,59 @@ def test_steady_chunk_has_three_code_overlap_and_25_new_codes() -> None:
     assert steady is not None
     assert _codes(steady) == [22, 23, 24, *range(25, 50)]
     assert steady.meta.chunk_seq == 1
+
+
+@pytest.mark.parametrize(("count", "emitted"), [(7, False), (8, True), (24, True)])
+def test_first_chunk_uses_initial_codec_chunk_frames(count: int, emitted: bool) -> None:
+    """首块提前：initial_codec_chunk_frames=8 时首块攒 8 帧即发（不等到 25）。"""
+    manager = _manager(initial=8)
+    payload = tts2code2wav_async_chunk(
+        transfer_manager=manager,
+        multimodal_output=_delta(*range(count)),
+        request=_request("req"),
+        is_finished=False,
+    )
+
+    assert (payload is not None) is emitted
+    if payload is not None:
+        assert _codes(payload) == [4218, 4218, 4218, *range(8)]
+        assert payload.meta.chunk_seq == 0
+        assert payload.meta.code_flat_numel == 11
+
+
+def test_initial_chunk_then_steady_stays_chunk_frames() -> None:
+    """首块 8 帧后，稳态块仍按 codec_chunk_frames=25 发。"""
+    manager = _manager(initial=8)
+    request = _request("req")
+
+    first = tts2code2wav_async_chunk(manager, _delta(*range(8)), request, False)
+    assert first is not None
+    assert _codes(first) == [4218, 4218, 4218, *range(8)]
+
+    steady = tts2code2wav_async_chunk(manager, _delta(*range(8, 33)), request, False)
+    assert steady is not None
+    assert _codes(steady) == [5, 6, 7, *range(8, 33)]
+    assert steady.meta.chunk_seq == 1
+
+
+def test_initial_codec_chunk_frames_clamped_to_chunk_frames() -> None:
+    """initial > chunk_frames 时 clamp 到 chunk_frames（等效关闭）。"""
+    manager = _manager(initial=40)
+    payload = tts2code2wav_async_chunk(
+        transfer_manager=manager,
+        multimodal_output=_delta(*range(24)),
+        request=_request("req"),
+        is_finished=False,
+    )
+    assert payload is None  # 24 < 25：即使 initial=40 也按 25 判
+    payload = tts2code2wav_async_chunk(
+        transfer_manager=manager,
+        multimodal_output=_delta(*range(24, 25)),
+        request=_request("req"),
+        is_finished=False,
+    )
+    assert payload is not None
+    assert _codes(payload) == [4218, 4218, 4218, *range(25)]
 
 
 def test_exact_boundary_final_flushes_held_lookahead() -> None:
