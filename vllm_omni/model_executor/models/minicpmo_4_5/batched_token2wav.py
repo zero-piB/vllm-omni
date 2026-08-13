@@ -207,8 +207,11 @@ class BatchedToken2Wav(nn.Module):
         cond: torch.Tensor,
         cnn_cache: torch.Tensor | None,
         att_cache: torch.Tensor | None,
+        step_idx: int,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        time_embedding = estimator.t_embedder(time).unsqueeze(1)
+        self._ensure_adaLN_table()
+        t_emb_table, block_mods, final_mod = self._adaLN_table
+        time_embedding = t_emb_table[step_idx].expand(x.shape[0], -1, -1)
         width = int(x.shape[-1])
         speaker_features = speakers.unsqueeze(-1).expand(-1, -1, width)
         estimator_input = torch.cat((x, mu, speaker_features, cond), dim=1)
@@ -223,8 +226,35 @@ class BatchedToken2Wav(nn.Module):
             old_att,
             cnn_out,
             att_out,
+            [bm[step_idx] for bm in block_mods],
+            final_mod[step_idx],
         )
         return result, cnn_out, att_out
+
+    def _ensure_adaLN_table(self) -> None:
+        """C17: 预计算 n_timesteps 个 timestep 的 t_embedding 与全部 adaLN 调制（逐位一致）。"""
+        if getattr(self, "_adaLN_table", None) is not None:
+            return
+        estimator = self.flow.decoder.estimator
+        device = next(estimator.parameters()).device
+        dtype = next(estimator.parameters()).dtype
+        timeline = torch.linspace(0, 1, self.n_timesteps + 1, device=device, dtype=dtype)
+        timeline = 1 - torch.cos(timeline * 0.5 * torch.pi)
+        dt = timeline[1] - timeline[0]
+        time = timeline[0].expand(1)
+        ts: list[torch.Tensor] = []
+        for step in range(self.n_timesteps):
+            ts.append(time)
+            time = time + dt
+            if step + 1 < self.n_timesteps:
+                dt = timeline[step + 2] - time[0]
+        t_in = torch.stack([t[0] for t in ts])  # (n_ts,)
+        t_emb = estimator.t_embedder(t_in).unsqueeze(1)  # (n_ts, 1, c)
+        block_mods = [
+            b.adaLN_modulation(t_emb).reshape(self.n_timesteps, 9, -1) for b in estimator.blocks
+        ]
+        final_mod = estimator.final_layer.adaLN_modulation(t_emb).reshape(self.n_timesteps, 2, -1)
+        self._adaLN_table = (t_emb, block_mods, final_mod)
 
     def _decode_cfm(
         self,
@@ -274,6 +304,7 @@ class BatchedToken2Wav(nn.Module):
                 cond=cond_cfg,
                 cnn_cache=old_cnn,
                 att_cache=old_att,
+                step_idx=step,
             )
             conditional, unconditional = estimate.split(batch_size, dim=0)
             velocity = (1.0 + decoder.inference_cfg_rate) * conditional - decoder.inference_cfg_rate * unconditional
