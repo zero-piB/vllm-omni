@@ -275,3 +275,10 @@ tests/.ci_generated/
 
 # Local Lance precision-matching dump scripts (not part of the repo)
 lance_compare/
+
+# 昇腾/实验运行时产物（自动再生，勿提交）
+kernel_meta/
+extra-info/
+torch_compile_debug/
+ascend_cache/
+aoe_workspace/
