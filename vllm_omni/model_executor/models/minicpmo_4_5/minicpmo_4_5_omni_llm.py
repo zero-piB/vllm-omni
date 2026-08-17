@@ -780,11 +780,8 @@ AutoImageProcessor.register(MiniCPMOConfig, MiniCPMVImageProcessor, exist_ok=Tru
 
 
 # ============== SigLIP Vision Transformer Classes ==============
-FlashAttentionUnpaddingMetadata: TypeAlias = tuple[torch.Tensor, torch.Tensor, int]
-
-
 # Copied from transformers.models.llama.modeling_llama._get_unpad_data
-def _get_unpad_data(attention_mask: torch.Tensor) -> FlashAttentionUnpaddingMetadata:
+def _get_unpad_data(attention_mask):
     seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
     indices = torch.nonzero(attention_mask.flatten(), as_tuple=False).flatten()
     max_seqlen_in_batch = seqlens_in_batch.max().item()
@@ -1129,7 +1126,6 @@ class SiglipFlashAttention2(SiglipAttention):
         past_key_value: tuple[torch.Tensor] | None = None,
         output_attentions: bool = False,
         use_cache: bool = False,
-        unpadding_metadata: FlashAttentionUnpaddingMetadata | None = None,
         **kwargs,
     ) -> tuple[torch.Tensor, torch.Tensor | None, tuple[torch.Tensor] | None]:
         output_attentions = False
@@ -1192,13 +1188,7 @@ class SiglipFlashAttention2(SiglipAttention):
             value_states = value_states.to(target_dtype)
 
         attn_output = self._flash_attention_forward(
-            query_states,
-            key_states,
-            value_states,
-            attention_mask,
-            q_len,
-            dropout=dropout_rate,
-            unpadding_metadata=unpadding_metadata,
+            query_states, key_states, value_states, attention_mask, q_len, dropout=dropout_rate
         )
 
         attn_output = attn_output.reshape(bsz, q_len, self.embed_dim).contiguous()
@@ -1210,15 +1200,7 @@ class SiglipFlashAttention2(SiglipAttention):
         return attn_output, attn_weights
 
     def _flash_attention_forward(
-        self,
-        query_states,
-        key_states,
-        value_states,
-        attention_mask,
-        query_length,
-        dropout=0.0,
-        softmax_scale=None,
-        unpadding_metadata: FlashAttentionUnpaddingMetadata | None = None,
+        self, query_states, key_states, value_states, attention_mask, query_length, dropout=0.0, softmax_scale=None
     ):
         """
         Calls the forward method of Flash Attention - if the input hidden states contain at least one padding token
@@ -1246,12 +1228,7 @@ class SiglipFlashAttention2(SiglipAttention):
         if attention_mask is not None:
             batch_size = query_states.shape[0]
             query_states, key_states, value_states, indices_q, cu_seq_lens, max_seq_lens = self._upad_input(
-                query_states,
-                key_states,
-                value_states,
-                attention_mask,
-                query_length,
-                unpadding_metadata=unpadding_metadata,
+                query_states, key_states, value_states, attention_mask, query_length
             )
 
             cu_seqlens_q, cu_seqlens_k = cu_seq_lens
@@ -1278,18 +1255,8 @@ class SiglipFlashAttention2(SiglipAttention):
 
         return attn_output
 
-    def _upad_input(
-        self,
-        query_layer,
-        key_layer,
-        value_layer,
-        attention_mask,
-        query_length,
-        unpadding_metadata: FlashAttentionUnpaddingMetadata | None = None,
-    ):
-        if unpadding_metadata is None:
-            unpadding_metadata = _get_unpad_data(attention_mask)
-        indices_k, cu_seqlens_k, max_seqlen_in_batch_k = unpadding_metadata
+    def _upad_input(self, query_layer, key_layer, value_layer, attention_mask, query_length):
+        indices_k, cu_seqlens_k, max_seqlen_in_batch_k = _get_unpad_data(attention_mask)
         batch_size, kv_seq_len, num_key_value_heads, head_dim = key_layer.shape
 
         key_layer = index_first_axis(
@@ -1359,7 +1326,6 @@ class SiglipEncoderLayer(nn.Module):
         hidden_states: torch.Tensor,
         attention_mask: torch.Tensor,
         output_attentions: bool | None = False,
-        unpadding_metadata: FlashAttentionUnpaddingMetadata | None = None,
     ) -> tuple[torch.FloatTensor]:
         """
         Args:
@@ -1374,19 +1340,11 @@ class SiglipEncoderLayer(nn.Module):
         residual = hidden_states
 
         hidden_states = self.layer_norm1(hidden_states)
-        if self._use_flash_attention_2:
-            hidden_states, attn_weights = self.self_attn(
-                hidden_states=hidden_states,
-                attention_mask=attention_mask,
-                output_attentions=output_attentions,
-                unpadding_metadata=unpadding_metadata,
-            )
-        else:
-            hidden_states, attn_weights = self.self_attn(
-                hidden_states=hidden_states,
-                attention_mask=attention_mask,
-                output_attentions=output_attentions,
-            )
+        hidden_states, attn_weights = self.self_attn(
+            hidden_states=hidden_states,
+            attention_mask=attention_mask,
+            output_attentions=output_attentions,
+        )
         hidden_states = residual + hidden_states
 
         residual = hidden_states
@@ -1487,7 +1445,6 @@ class SiglipEncoder(nn.Module):
         self.config = config
         self.layers = nn.ModuleList([SiglipEncoderLayer(config) for _ in range(config.num_hidden_layers)])
         self.gradient_checkpointing = False
-        self._use_flash_attention_2 = config._attn_implementation == "flash_attention_2"
 
     # Ignore copy
     def forward(
@@ -1528,9 +1485,6 @@ class SiglipEncoder(nn.Module):
         all_attentions = () if output_attentions else None
 
         hidden_states = inputs_embeds
-        unpadding_metadata = (
-            _get_unpad_data(attention_mask) if self._use_flash_attention_2 and attention_mask is not None else None
-        )
         for encoder_layer in self.layers:
             if output_hidden_states:
                 encoder_states = encoder_states + (hidden_states,)
@@ -1540,14 +1494,12 @@ class SiglipEncoder(nn.Module):
                     hidden_states,
                     attention_mask,
                     output_attentions,
-                    unpadding_metadata,
                 )
             else:
                 layer_outputs = encoder_layer(
                     hidden_states,
                     attention_mask,
                     output_attentions=output_attentions,
-                    unpadding_metadata=unpadding_metadata,
                 )
 
             hidden_states = layer_outputs[0]
