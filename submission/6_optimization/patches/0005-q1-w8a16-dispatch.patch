@@ -1,0 +1,45 @@
+diff --git a/vllm_ascend/quantization/compressed_tensors_config.py b/vllm_ascend/quantization/compressed_tensors_config.py
+index 904ba7d5..02d1406c 100644
+--- a/vllm_ascend/quantization/compressed_tensors_config.py
++++ b/vllm_ascend/quantization/compressed_tensors_config.py
+@@ -299,6 +299,11 @@ class AscendCompressedTensorsConfig(QuantizationConfig):
+                 targets=self.target_scheme_map.keys(),
+                 fused_mapping=self.packed_modules_mapping,
+             )
++            if matched_target is None:
++                # Layer not in any target group → not quantized (Q1 fix:
++                # e.g. embed_tokens / non-llm prefixes must fall through,
++                # not KeyError).
++                return None
+             scheme_dict = self.target_scheme_map[matched_target]
+             if scheme_dict.get("format") is None:
+                 scheme_dict["format"] = self.quant_format
+@@ -372,6 +377,9 @@ class AscendCompressedTensorsConfig(QuantizationConfig):
+             if self._is_dynamic_token_w4a8(weight_quant, input_quant):
+                 return "W4A8_DYNAMIC"
+ 
++        if self._is_w8a16(weight_quant, input_quant):
++            return "W8A16"
++
+         if self._is_w4a16(weight_quant, input_quant):
+             return "W4A16"
+ 
+@@ -422,6 +430,18 @@ class AscendCompressedTensorsConfig(QuantizationConfig):
+         # Only symmetric weight quantization supported.
+         return is_4_bits and is_8_bits and is_token and is_symmetric and is_dynamic
+ 
++    def _is_w8a16(self, weight_quant: "QuantizationArgs", input_quant: Optional["QuantizationArgs"]) -> bool:
++        """Weight-only INT8 (per-channel), activations stay fp16 (Q1 W8A16)."""
++        if weight_quant is None:
++            return False
++        if weight_quant.type != QuantizationType.INT:
++            return False
++        input_quant_none = input_quant is None
++        is_8_bits = weight_quant.num_bits == 8
++        is_channel = weight_quant.strategy == QuantizationStrategy.CHANNEL.value
++        is_static = not weight_quant.dynamic
++        return input_quant_none and is_8_bits and is_channel and is_static
++
+     def _is_w4a16(self, weight_quant: "QuantizationArgs", input_quant: Optional["QuantizationArgs"]) -> bool:
+         # Confirm weights quantized.
+         if weight_quant is None:

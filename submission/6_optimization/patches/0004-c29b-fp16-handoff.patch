@@ -1,0 +1,14 @@
+diff --git a/vllm_omni/model_executor/stage_input_processors/minicpmo_4_5_omni.py b/vllm_omni/model_executor/stage_input_processors/minicpmo_4_5_omni.py
+index ac1f7624..7088a1ef 100644
+--- a/vllm_omni/model_executor/stage_input_processors/minicpmo_4_5_omni.py
++++ b/vllm_omni/model_executor/stage_input_processors/minicpmo_4_5_omni.py
+@@ -824,7 +824,8 @@ def llm2tts(
+                     special_token_ids.get("chunk_tts_eos_token_id"),
+                 }
+             tts_token_ids_slice = torch.tensor(full_token_ids[tts_bos_idx:end_idx], dtype=torch.long)
+-            tts_hidden_slice = thinker_hidden_states[tts_bos_idx:end_idx].to(torch.float32).contiguous()
++            # C29b: 保留 fp16（载荷减半）—— 消费端 torch.as_tensor(dtype=float32) 自动转换，数值等价
++            tts_hidden_slice = thinker_hidden_states[tts_bos_idx:end_idx].contiguous()
+         elif is_native_duplex_handoff:
+             # Official MiniCPM-o duplex does not prefill an assistant
+             # <|tts_bos|> boundary before generation. A segment delta can

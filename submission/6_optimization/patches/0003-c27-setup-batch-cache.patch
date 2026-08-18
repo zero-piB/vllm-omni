@@ -1,0 +1,47 @@
+diff --git a/vllm_omni/model_executor/models/minicpmo_4_5/minicpmo_4_5_code2wav.py b/vllm_omni/model_executor/models/minicpmo_4_5/minicpmo_4_5_code2wav.py
+index ddc28c0f..13fbefb9 100644
+--- a/vllm_omni/model_executor/models/minicpmo_4_5/minicpmo_4_5_code2wav.py
++++ b/vllm_omni/model_executor/models/minicpmo_4_5/minicpmo_4_5_code2wav.py
+@@ -131,6 +131,8 @@ class MiniCPMO45Code2Wav(nn.Module):
+         self._states: dict[str, _RequestState] = {}
+         self._runtime_prompts: dict[str, _RuntimePrompt] = {}
+         self._request_prompt_keys: dict[str, str] = {}
++        # C27: setup_batch 预计算缓存（key=(prompt_cache_id, prompt_wav) → 模板 states）
++        self._setup_cache: dict[tuple[str, str], list] = {}
+         self._runtime_prompt_dir = tempfile.TemporaryDirectory(
+             prefix="minicpmo45-runtime-prompts-",
+         )
+@@ -175,6 +177,22 @@ class MiniCPMO45Code2Wav(nn.Module):
+             self._default_prompt_wav = str(model_root / "assets" / "HT_ref_audio.wav")
+         return model_root
+ 
++    def _setup_or_cached(self, prompt_cache_id: str, prompt_wav: str, features: Any, batch_size: int) -> list:
++        """C27: setup_batch 缓存（默认 prompt 首请求算一次，后续 clone）。"""
++        key = (prompt_cache_id, prompt_wav)
++        cached = self._setup_cache.get(key)
++        if cached is None:
++            cached = self.backend.setup_batch(features, 1)
++            self._setup_cache[key] = cached
++        template = cached[0]
++        return [
++            BatchedToken2WavState(
++                flow_cache={k: v.detach().clone() for k, v in template.flow_cache.items()},
++                hift_cache={k: v.detach().clone() for k, v in template.hift_cache.items()},
++            )
++            for _ in range(batch_size)
++        ]
++
+     def _extra_config(self) -> dict[str, Any]:
+         model_config = getattr(self.vllm_config, "model_config", None)
+         connector = getattr(model_config, "stage_connector_config", None)
+@@ -646,7 +664,9 @@ class MiniCPMO45Code2Wav(nn.Module):
+                     bucket[0].prompt_wav,
+                 )
+                 if bucket[0].previous is None:
+-                    states = self.backend.setup_batch(features, batch_size)
++                    states = self._setup_or_cached(
++                        bucket[0].prompt_cache_id, bucket[0].prompt_wav, features, batch_size
++                    )
+                 else:
+                     states = [item.previous.token2wav for item in bucket if item.previous is not None]
+                 tokens = torch.stack([item.tokens for item in bucket], dim=0)

@@ -1,0 +1,13 @@
+diff --git a/vllm_omni/entrypoints/openai/serving_chat.py b/vllm_omni/entrypoints/openai/serving_chat.py
+index a0bce789..1bfebd36 100755
+--- a/vllm_omni/entrypoints/openai/serving_chat.py
++++ b/vllm_omni/entrypoints/openai/serving_chat.py
+@@ -239,7 +239,7 @@ class OmniOpenAIServingChat(OpenAIServingChat, AudioMixin):
+ 
+             model_stage = self._stage_get(engine_args, "model_stage")
+             if model_stage == "llm":
+-                sp.output_kind = RequestOutputKind.FINAL_ONLY
++                sp.output_kind = RequestOutputKind.DELTA
+             elif model_stage == "tts":
+                 sp.output_kind = RequestOutputKind.DELTA
+         return sampling_params_list

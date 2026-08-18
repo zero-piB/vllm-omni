@@ -1,0 +1,9 @@
+# 运行时产物（数据/日志/结果，可删即重置，不入库）
+7_runtime/
+
+# 昇腾编译缓存
+kernel_meta/
+
+# Python 缓存
+__pycache__/
+*.pyc
