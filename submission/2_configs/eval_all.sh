@@ -16,7 +16,7 @@ echo "==== 2/3 TTS-Seed ASV/SIM（服务: 默认 yaml） ====" | tee -a "$SUM"
 ./eval_seed_tts_asv.sh "$N" 2>&1 | tee -a "$SUM"
 
 echo "==== 3/3 Daily-Omni（服务: bench yaml） ====" | tee -a "$SUM"
-./server_restart.sh minicpmo_4_5_bench.yaml
+./server_restart.sh minicpmo_4_5.yaml
 ./eval_daily_omni.sh "$N" 2>&1 | tee -a "$SUM"
 
 echo "==== 可选: VideoMME（服务: 默认 yaml，耗时较长） ====" | tee -a "$SUM"

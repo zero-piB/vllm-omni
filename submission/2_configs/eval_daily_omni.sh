@@ -7,7 +7,7 @@ set -euo pipefail
 source "$(dirname "$0")/env.sh"
 N=${1:-32}
 if [ "${2:-}" = "restart-server" ] || [ "${2:-}" = "restart_server" ]; then
-  "$(dirname "$0")/server_restart.sh" minicpmo_4_5_bench.yaml
+  "$(dirname "$0")/server_restart.sh" minicpmo_4_5.yaml
 fi
 export HF_ENDPOINT=https://hf-mirror.com HF_HUB_DISABLE_XET=1
 # 调试开关：DAILY_OMNI_INLINE=1 时视频 base64 内嵌请求（无需服务端 allowlist），仅小样本调试用

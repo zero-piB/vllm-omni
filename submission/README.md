@@ -42,17 +42,24 @@ bash 2_configs/perf_seed_tts.sh
 - vllm-omni v0.25.0-a3（minicpm-challenge 分支），`VLLM_WORKER_MULTIPROC_METHOD=spawn`
 - 模型：`/workspace/shared_assets/models/OpenBMB/MiniCPM-o-4_5`
 
-## 部署配置来源（1_code/*.yaml 与官方的关系）
+## 部署配置来源（配置单一源）
 
-| 文件 | 来源 | 改动（diff 可审计） |
-|---|---|---|
-| `minicpmo_4_5.yaml` | 官方 `vllm_omni/deploy/minicpmo_4_5.yaml` 复制 | **仅 3 键**：`codec_chunk_frames 25→15` + 新增 `initial_codec_chunk_frames: 8`（E6）+ 新增 `token2wav_n_timesteps: 5`（E5+E7+E9） |
-| `minicpmo_4_5_bench.yaml` | **自建**（官方无此文件，等价于官方 yaml 手改 rep） | 官方默认 + 仅 `repetition_penalty: 1.0→1.2`（Daily-Omni 官方配方，demo 文档 §7.7.2） |
-| `minicpmo_4_5_duplex.yaml` | 官方 `vllm_omni/deploy/minicpmo_4_5_duplex.yaml` 复制 | **零改动** |
+**评测配置只有一个**：`vllm_omni/deploy/minicpmo_4_5.yaml`（官方路径 = champion 配置，含全部优化）。
+`1_code/minicpmo_4_5.yaml` 是它的软链（`../../vllm_omni/deploy/minicpmo_4_5.yaml`），改配置只改官方路径一处。
 
-配套的源码 patch（E6 首块提前，改 `minicpmo_4_5_omni.py` 一个文件）在 `6_optimization/patches/`，新机器 `git apply` 即可。
+champion 相对官方原版的改动（diff 可审计）：
+- `codec_chunk_frames 25→15` + `initial_codec_chunk_frames: 8`（E5+E6，TTFP -18%）
+- `token2wav_n_timesteps 10→3`（C57，RTF -18%）
+- `cudagraph_mode: FULL_AND_PIECEWISE`（C49，TTFT/TTFP/RTF 全 -8~11%）
 
-服务启动命令（`2_configs/server_restart.sh` 内置）：`--deploy-config $CODE_DIR/<yaml>`，**单卡只用以上三个**；官方多卡变体（2gpu/3gpu/4gpu/8x4090）与本提交无关。
+| 其他文件 | 用途 |
+|---|---|
+| `1_code/minicpmo_4_5_duplex.yaml` | 全双工 demo（不计分） |
+| `1_code/baseline_official.yaml` | 官方基线对照（复现基线用，见 `6_optimization/baseline_diff.md`） |
+
+配套的源码 patch（E6 首块提前）在 `6_optimization/patches/`，新机器 `git apply` 即可。
+
+服务启动命令（`2_configs/server_restart.sh` 内置）：`--deploy-config $CODE_DIR/<yaml>`。官方多卡变体（2gpu/3gpu/4gpu/8x4090）与本提交无关。
 
 ## 服务启动
 
