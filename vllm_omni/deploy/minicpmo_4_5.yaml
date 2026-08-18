@@ -12,7 +12,9 @@ connectors:
       connector_get_sleep_s: 0.01
       connector_get_max_wait_first_chunk: 3000
       connector_get_max_wait: 300
-      codec_chunk_frames: 25
+      codec_chunk_frames: 15
+      initial_codec_chunk_frames: 8
+      token2wav_n_timesteps: 3
       codec_left_context_frames: 3
 
 stages:
@@ -35,8 +37,7 @@ stages:
         fps: 1
         num_frames: 128
     limit_mm_per_prompt:
-      # Daily-Omni: up to 64 interleaved image/audio pairs (1fps).
-      # Video-MME minicpm-frames: OmniEvalKit samples up to 96 frames as image_url.
+      # Daily-Omni MiniCPM pack ≤64 pairs (1fps); VideoMME minicpm-frames pack ≤96 帧（官方要求 ≥96）。
       image: 96
       audio: 64
       video: 1
@@ -95,8 +96,8 @@ platforms:
       - stage_id: 0
         max_num_batched_tokens: 8192
         compilation_config:
-          cudagraph_mode: PIECEWISE
+          cudagraph_mode: FULL_AND_PIECEWISE
       - stage_id: 1
         max_num_batched_tokens: 8192
         compilation_config:
-          cudagraph_mode: PIECEWISE
+          cudagraph_mode: FULL_AND_PIECEWISE
