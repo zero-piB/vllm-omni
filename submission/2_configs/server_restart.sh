@@ -25,6 +25,7 @@ nohup "$VLLM" serve "$MODEL_DIR" --omni \
   --deploy-config "$YAML_PATH" \
   --stage-init-timeout 900 --init-timeout 1200 --host 0.0.0.0 --port 8091 \
   --allowed-local-media-path "$DATA_DIR" \
+  --interleave-mm-strings \
   >> "$LOG" 2>&1 &
 last=""
 for i in $(seq 1 60); do

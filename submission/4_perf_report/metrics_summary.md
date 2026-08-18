@@ -92,3 +92,32 @@ TTFT/TTFP ≈ 19.8s（duplex 会话启动开销大，功能完整：3 音频分�
 | C57 **ts3**（C49 之上，2026-08-17 晋级）| `token2wav_n_timesteps 5→3`（同行情报；cfm 每块 171→~103ms）| **1.12%（32 条）/ 1.16%（256 条）** ✅ | —（留官方环境）| **380.7/680.2/0.45** | **RTF -18%（0.55→0.45，910B 即达 910C 基线 0.4423 水平）；TTFP -10%；WER 退化趋势（32 条 0.66→1.12）但 256 条线内** |
 
 | C48 **stage0 DELTA 流式**（C57 之上，2026-08-17 晋级）| `serving_chat.py:242` stage0 output_kind FINAL_ONLY→DELTA（文本逐 token 流出；handoff 仍 finished 门槛，音频路径零改动）| **1.12%** ✅（32 条=基线）| —（留官方环境）| **110.7/696.9/0.47** | **TTFT 380.7→110.7（-71%，反超 910C 基线 333ms 3 倍）；TTFP +2%/RTF +2-4% 噪声内**；patch: `6_optimization/patches/0006-c48-stage0-delta-streaming.patch` |
+
+---
+
+# 910C 复刻实测（2026-08-18，迁移 commit af44410）
+
+> 910B 全量优化（E3+E5+E6+C57+C20+C27+C29b+C49）迁移到 910C 后首轮验证。
+> 环境：2×Ascend910 64G（服务单卡部署）、内存 2TB、CANN 预装官方版本、vllm-ascend 官方预装。
+> 迁移修复：C20 decoder-dit 双补丁需重新 apply 到 site-packages（910B 本地包补丁未随提交物迁移，服务首请求即崩，`blocks_forward_chunk` 9 参数签名缺失）。
+
+## 910C 优化基准锚点（后续优化以此为基础）
+
+口径：`perf_seed_tts.sh 32 1`（en、并发 1）；WER/ASV 为 zh/en 32 条并发 4。
+
+| 配置 | TTFT (ms) | TTFP (ms) | RTF | 说明 |
+|---|---|---|---|---|
+| 官方 baseline（chunk25/ts10/无initial/PIECEWISE）| 334.23 | 842.16 | 0.45 | 官方参考 333.27/986.47/0.4423：**TTFT 完美复现**（+0.3%），TTFP 反超 14.6%（预装环境差异）|
+| **champion（minicpmo_4_5.yaml）轮1** | 388 | 595 | 0.42 | C20 补丁后首个完整服务会话 |
+| **champion 轮2**（服务稳定多轮后）| **314.57** | **500.36** | **0.34** | 全面反超官方参考（TTFT -6%/TTFP -49%/RTF -23%）|
+
+**精度**（champion，两轮一致）：WER zh 32 = **1.12%** ✅（准入 1.56）/ SIM 32 = **0.8445** ✅（准入 0.689）。
+
+## 关键结论（优化 A/B 铁律）
+
+1. **同配置两轮 perf 差 15-20%**（388→314 / 595→500 / 0.42→0.34），超 ±3% 噪声窗 —— 服务重启后的图编译/缓存状态影响显著，**轮2（服务稳定运行后）更优**。
+2. A/B 对比必须：①同一服务会话内；②2-3 轮均值；③基准 = 轮2 数据（314.57/500.36/0.34）或同会话 champion 复测。
+3. 候选池：C60 双卡布局（910C 2 卡只用 1 卡，stage0 独占卡0 潜力）、C55 static kernel（910C 条件试跑）。
+4. 待办：全量四件套坐实 C57（DO 1196 / VideoMME 2700 / WER zh 2020 / ASV 1088，910C 首跑）。
+
+| C63 **stage0 TP=2 双 die 并行**（C57 之上，2026-08-18 晋级）| `tensor_parallel_size 2` + stage0 devices "0,1" / stage2 devices "1"；源码修复 vllm-omni stage 初始化锁序死锁（F41，`stage_runtime.py` acquire_device_locks 移出 spawn 锁作用域，patch 0007）| **1.31%（32 条）** / SIM **0.8442**（32 条）| 全量待跑 | **256.1 / 445.4 / 0.29** | **TTFT -19% / TTFP -11% / RTF -15%**（三轮均值 vs champion 轮2 314.57/500.36/0.34）；HCCL 数据面走 HCCS（die 间设备级直连，socket 仅控制面），910C 双 die 算力全面用上 |

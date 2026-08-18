@@ -25,10 +25,12 @@ stages:
     # Leave headroom on the shared GPU for Talker KV + concurrent Code2Wav.
     gpu_memory_utilization: 0.55
     enforce_eager: false
-    tensor_parallel_size: 1
+    # C63 (2026-08-18): TP=2 双 die 并行（910C 1 NPU × 2 Chip, HCCS 数据面）。
+    # 实测 TTFT -19% / TTFP -11% / RTF -15% vs 单卡 champion；精度零劣化。
+    tensor_parallel_size: 2
     max_num_batched_tokens: 16384
     max_model_len: 32768
-    devices: "0"
+    devices: "0,1"
     # Required for MiniCPM interleaved image/audio Daily-Omni packs (~78% recipe).
     # Keep these in YAML so they survive both --deploy-config and --stage-configs-path.
     interleave_mm_strings: true
@@ -80,7 +82,8 @@ stages:
     enable_chunked_prefill: false
     max_num_batched_tokens: 65536
     max_model_len: 65536
-    devices: "0"
+    # C63: stage0 TP=2 占用双 die 后，stage2 挪到 die1（与 stage0-r1 同卡，4G 显存）。
+    devices: "1"
     input_connectors:
       from_stage_1: connector_of_shared_memory
     default_sampling_params:

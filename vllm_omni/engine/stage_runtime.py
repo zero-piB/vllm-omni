@@ -563,12 +563,20 @@ class StageRuntime:
                 raise RuntimeError(f"LLM stage {plan.metadata.stage_id} is missing executor_class")
             if plan.engine_args_dict is None:
                 raise RuntimeError(f"LLM stage {plan.metadata.stage_id} is missing engine args")
+            # Device locks are pure flock(2) file locks — no device env needed.
+            # Acquiring them INSIDE _scoped_spawn_device_env holds _spawn_device_lock
+            # while blocking on other stages' locks: with TP>1 a later stage can hold
+            # the spawn lock while waiting for a device lock this stage holds, and
+            # this stage then blocks on the spawn lock inside launch_stage_replica —
+            # a deadlock ring (observed with stage0 TP=2: stage2 held spawn lock
+            # waiting on device 1 while stage0 held devices 0,1 waiting on spawn).
+            lock_fds = acquire_device_locks(
+                plan.metadata.stage_id,
+                plan.engine_args_dict,
+                stage_init_timeout,
+            )
             with self._scoped_spawn_device_env(physical_devices):
-                lock_fds = acquire_device_locks(
-                    plan.metadata.stage_id,
-                    plan.engine_args_dict,
-                    stage_init_timeout,
-                )
+                pass
             # Serialize engine-core spawning across all LLM replicas to avoid
             # ZMQ port-allocation races and simultaneous CUDA context init.
             with self._replica_launch_lock:
