@@ -12,12 +12,13 @@ import json
 import os
 import signal
 import subprocess
+import os
 import sys
 import time
 import urllib.request
 
-ASSETS = "/workspace/shared_assets/models/OpenBMB/MiniCPM-o-4_5/assets"
-GRADIO_PY = "/workspace/vllm-omni/examples/online_serving/minicpmo/gradio_demo.py"
+ASSETS = os.environ.get("MODEL_DIR", "/workspace/shared_assets/models/OpenBMB/MiniCPM-o-4_5") + "/assets"
+GRADIO_PY = os.environ.get("REPO_DIR", "/workspace/vllm-omni") + "/examples/online_serving/minicpmo/gradio_demo.py"
 GRADIO_PORT = 7862
 
 
@@ -51,7 +52,7 @@ def wait_api(base: str, timeout_s: int = 900) -> bool:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default="http://127.0.0.1:8091")
-    ap.add_argument("--out", default="/workspace/submission/7_runtime/results/demo")
+    ap.add_argument("--out", default=os.environ.get("SUBMISSION_DIR", "/workspace/submission") + "/7_runtime/results/demo")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     result: dict = {"demo": "gradio_half_duplex", "steps": {}}

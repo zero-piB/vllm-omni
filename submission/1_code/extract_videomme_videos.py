@@ -8,7 +8,7 @@ videos_chunked_*.zip archives into /workspace/submission/7_runtime/media/videomm
 Usage:
   python3 extract_videomme_videos.py [--parquet PATH] [--zips-dir PATH] [--out-dir PATH]
 """
-import argparse, json, sys, zipfile
+import argparse, json, os, sys, zipfile
 from pathlib import Path
 
 
@@ -32,12 +32,14 @@ def load_video_ids(parquet: Path) -> set[str]:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
+    raw = os.environ.get("RAW_DATA_DIR", "/workspace/shared_assets/datasets")
+    sub = os.environ.get("SUBMISSION_DIR", "/workspace/submission")
     ap.add_argument("--parquet", type=Path,
-                    default=Path("/workspace/shared_assets/datasets/lmms-lab/Video-MME/videomme/test-00000-of-00001.parquet"))
+                    default=Path(raw) / "lmms-lab/Video-MME/videomme/test-00000-of-00001.parquet")
     ap.add_argument("--zips-dir", type=Path,
-                    default=Path("/workspace/shared_assets/datasets/lmms-lab/Video-MME"))
+                    default=Path(raw) / "lmms-lab/Video-MME")
     ap.add_argument("--out-dir", type=Path,
-                    default=Path("/workspace/submission/7_runtime/media/videomme_videos"))
+                    default=Path(sub) / "7_runtime/media/videomme_videos")
     ap.add_argument("--zip-prefix", default="videos_chunked")
     args = ap.parse_args()
 

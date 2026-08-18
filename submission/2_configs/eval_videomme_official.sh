@@ -9,7 +9,7 @@ export HF_ENDPOINT=https://hf-mirror.com HF_HUB_DISABLE_XET=1
 LOG="$RESULTS/videomme_official_$(date +%H%M%S).log"
 
 "$VLLM" bench serve --omni --port 8091 --max-concurrency 4 \
-  --dataset-name videomme --dataset-path /workspace/shared_assets/datasets/lmms-lab/Video-MME \
+  --dataset-name videomme --dataset-path "$RAW_DATA_DIR/lmms-lab/Video-MME" \
   --num-prompts "$N" --trust-remote-code --no-oversample --disable-shuffle \
   --temperature 0 --output-len 128 \
   --videomme-pack-mode minicpm-frames --videomme-max-frames 96 --videomme-duration all \
