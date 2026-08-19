@@ -1,13 +1,15 @@
 #!/bin/bash
-# Daily-Omni 评测（官方 vllm bench，准入 ≥77.5；bench yaml: repetition_penalty 1.2）
+# Daily-Omni 评测（官方 vllm bench，准入 ≥77.5）
 # 用法: ./eval_daily_omni.sh [条数] [restart-server]
-#   条数默认 32；全量 1197 传 1197；传 restart-server 自动切 bench 服务（否则需先切好）
+#   条数默认 32；全量 1196 传 1196；传 restart-server 自动切默认服务（否则需先切好）
+#   注意 2026-08-19: DO 必须用默认 yaml（官方 tests/e2e _DEPLOY_CONFIG 铁证 + 实测：
+#   bench yaml rp1.2/image64 = 64.21% ❌ vs 默认 yaml = 78.43% ✅，差 14pp）
 #   调试: DAILY_OMNI_INLINE=1 时视频 base64 内嵌请求（无需 allowlist），仅小样本用
 set -euo pipefail
 source "$(dirname "$0")/env.sh"
 N=${1:-32}
 if [ "${2:-}" = "restart-server" ] || [ "${2:-}" = "restart_server" ]; then
-  "$(dirname "$0")/server_restart.sh" minicpmo_4_5_bench.yaml
+  "$(dirname "$0")/server_restart.sh" minicpmo_4_5.yaml
 fi
 export HF_ENDPOINT=https://hf-mirror.com HF_HUB_DISABLE_XET=1
 # 调试开关：DAILY_OMNI_INLINE=1 时视频 base64 内嵌请求（无需服务端 allowlist），仅小样本调试用

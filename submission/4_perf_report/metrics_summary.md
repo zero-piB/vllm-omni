@@ -120,4 +120,4 @@ TTFT/TTFP ≈ 19.8s（duplex 会话启动开销大，功能完整：3 音频分�
 3. 候选池：C60 双卡布局（910C 2 卡只用 1 卡，stage0 独占卡0 潜力）、C55 static kernel（910C 条件试跑）。
 4. 待办：全量四件套坐实 C57（DO 1196 / VideoMME 2700 / WER zh 2020 / ASV 1088，910C 首跑）。
 
-| C63 **stage0 TP=2 双 die 并行**（C57 之上，2026-08-18 晋级）| `tensor_parallel_size 2` + stage0 devices "0,1" / stage2 devices "1"；源码修复 vllm-omni stage 初始化锁序死锁（F41，`stage_runtime.py` acquire_device_locks 移出 spawn 锁作用域，patch 0007）| **1.31%（32 条）** / SIM **0.8442**（32 条）| 全量待跑 | **256.1 / 445.4 / 0.29** | **TTFT -19% / TTFP -11% / RTF -15%**（三轮均值 vs champion 轮2 314.57/500.36/0.34）；HCCL 数据面走 HCCS（die 间设备级直连，socket 仅控制面），910C 双 die 算力全面用上 |
+| C63 **stage0 TP=2 双 die 并行**（C57 之上，2026-08-18 晋级）| `tensor_parallel_size 2` + stage0 devices "0,1" / stage2 devices "1"；源码修复 vllm-omni stage 初始化锁序死锁（F41，`stage_runtime.py` acquire_device_locks 移出 spawn 锁作用域，patch 0007）| **1.43%（zh 2020 全量）** / SIM **0.8487**（1088 全量）— DO **78.43%**（1196）/ VideoMME **69.59%**（2700），四项全绿（P7, 8-19） | **256.1 / 445.4 / 0.29**（8-19 确认轮 274.7/461.7/0.303） | **TTFT -19% / TTFP -11% / RTF -15%**（三轮均值 vs champion 轮2 314.57/500.36/0.34）；HCCL 数据面走 HCCS（die 间设备级直连，socket 仅控制面），910C 双 die 算力全面用上 |
