@@ -107,3 +107,29 @@ token2wav_n_timesteps: 6      # 10 → 8 → 6（每块 estimator 前向 16 → 
 ## 复现
 
 `--dtype float16` + 默认 yaml（含 E5）启动服务 → `2_configs/eval_seed_tts_wer.sh 32` / `eval_seed_tts_asv.sh 32` / `perf_seed_tts.sh 32`
+
+## 附：quantization patches 应用说明（0008-w4a16-linear-scheme.patch）
+
+**目标仓库**：vllm-ascend（官方环境 pip 版本，与本地 0.19.1rc2 对齐）
+**应用命令**（在 vllm-ascend 仓库根目录）：
+```bash
+git apply submission/6_optimization/patches/0008-w4a16-linear-scheme.patch
+```
+（已在干净 HEAD 上验证 `git apply --check` 通过）
+
+**包含的改动**：
+1. `vllm_ascend/quantization/methods/w4a16_linear.py`（新增）— `AscendW4A16LinearMethod`：
+   compressed-tensors group-strategy int4 权重（int8 容器 [-8,7] + per-group32 scale/offset），
+   `npu_weight_quant_batchmatmul(antiquant_group_size=32)`，权重保持 ND 不转 NZ
+   （910C CANN 9.0.0 的 fp16/int4 内核只覆盖 weight format 29/3，FRACTAL_NZ 的 tiling key
+   无内核——实测 4613751299 kernel missing）
+2. `vllm_ascend/quantization/methods/__init__.py` — 注册 + 加入 `is_mx_quant_type`（per-group
+   scale 的 TP 切分需要 input_dim=1，method_adapters.py:120 门控）
+3. `vllm_ascend/quantization/compressed_tensors_config.py` — `matched_target is None` 回落
+   （与 0005 同 hunk；**若官方环境已应用 0005，该 hunk 会重复**，可跳过此段用 `git apply
+   --exclude=...` 或手动处理，其余两个文件不受影响）
+
+**配合的提交物**（无需 patch）：
+- `1_code/minicpmo_4_5_int4.yaml` — stage0 `quantization: compressed-tensors` + 指向 w4a16 ckpt
+- `6_optimization/quant_export_w4a16.py` — 导出脚本（先在本机/官方环境 CPU 运行生成 ckpt）
+- ckpt 产物：`local_models/MiniCPM-o-4_5-w4a16`（12.8G，模型目录需一并提交/重建）

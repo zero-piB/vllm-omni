@@ -39,16 +39,24 @@
 ### stage2（Code2Wav，生成期每块 ~100ms）— 三阶段中 device 最忙，op 碎片化最重
 - device 自耗时 12.8s：**Conv2D 27.5%**（flow encoder CNN + HiFiT 声码器）+ **aclnnCat 15.1%**（chunk 拼帧）+ **LayerNorm 12.8%** + Mul/Addmm/Add 逐元素风暴；Conv2DTranspose 3.1%（声码器上采样）
 - **host launch 28.4s > device 计算 12.7s**：launch+LaunchKernel 13.9s 纯 launch 开销（1.36M kernel）
-- **50.6k 次 aclopCompileAndExecute（2.5s）——运行时 shape 不稳触发重编译**（stage2 是 enforce_eager + 禁 chunked prefill，变长 chunk/initial 8 帧路径嫌疑）
+- **50.6k 次 aclopCompileAndExecute（2.5s）——根因已闭环（2026-08-19）**：`stepaudio2/flashcosyvoice/modules/qwen2_components/layers.py` 的
+  `SiluAndMul.forward` / `RMSNorm.rms_forward` / `RMSNorm.add_rms_forward` 被 `@torch.compile` 装饰，NPU 上 Dynamo 缓存从不命中
+  → 每次执行重编译 ~184 op（trace：`AscendCL@aclopCompileAndExecute` 50600 + `opCompile` 50600 + `Torch-Compiled Region 0/1`×240 + `0/2`×35，
+  均匀铺满 42.8s 窗口 = 零缓存命中，每请求 ~1446 次编译 ≈ 70ms）。修复 = monkey-patch `torch._dynamo.disable` 解除（先例：
+  `vllm_omni/platforms/npu/models/cosyvoice2_dit_attn.py:_disable_upsample_encoder_compile`），台账 C66
 
 ## 4. 优化杠杆排序（证据驱动）
 
 | rank | stage | 杠杆 | 依据 |
 |---|---|---|---|
-| 1 | stage2 | op 融合：Cat/LayerNorm/Mul 逐元素风暴（占 device 时间 ~36%）→ 少而大的 kernel | 1.36M launch / 请求 39k；host 28.4s > device 12.7s |
-| 2 | stage2 | 查 50.6k 次 aclopCompileAndExecute 的 shape 不稳根因 | 每请求 ~1446 次运行时编译（2.5s/43s） |
+| 1 | stage2 | **解除 stepaudio2 的 @torch.compile（C66，根因已闭环）**——monkey-patch `torch._dynamo.disable`，回收 70ms/请求纯编译开销 | 50600 次 aclopCompileAndExecute 零缓存命中；先例 cosyvoice2_dit_attn.py |
+| 2 | stage2 | op 融合：Cat/LayerNorm/Mul 逐元素风暴（占 device 时间 ~36%）→ 少而大的 kernel（C67，C66 后重定位：RMSNorm 解除编译后的 aclnn 融合） | 1.36M launch / 请求 39k；host 28.4s > device 12.7s |
 | 3 | stage0 | TP=2 Allreduce 通信（窗口 8.5%）+ host 间隙 | 与 C63 的 TP 收益权衡；TTFT 主体非算子 |
-| 4 | stage1 | 逐 token launch 减量（57k 次/请求），融合簿记 kernel | Scatter/slot/Bincount 占 device 时间 64% |
+| 4 | stage1 | 逐 token launch 减量（57k 次/请求），融合簿记 kernel（C69） | Scatter/slot/Bincount 占 device 时间 64% |
+
+> C68 归因（2026-08-19，closed）：stage0 的 Free 79.9% 主要是**背压**（并发 1 无跨请求重叠，等 stage1/2 消化），
+> 不是它自身慢（forward 期间 device 满载，处理 ~0.25s/请求）。结构性含义：32×1 下 RTF = 三阶段每请求耗时串行和，
+> 主战场在 stage1+stage2 的 host launch（405ms + 811ms/请求）vs device（82ms + 366ms）。
 
 ## 5. 与其他专项的交叉说明（重要）
 
