@@ -45,3 +45,18 @@ devices: "0,1"。
 - 提交物按当前 champion(0.28, 精度全绿)先提交 —— 分数安全垫
 - 方案 A 与 B 均不阻塞提交(提交物内代码已是最终形态)
 - 若官方环境可验证 B → 最大杠杆(RTF -0.02); A 作为 B 失效时的后备
+
+## 方案 C(重构级): stage1 TP2 共享 HCCL 组(RTF -0.02~-0.027)
+
+**收益**: stage1 device 图重放 2ms→~1.2ms/token → RTF 0.28→0.26(32×1) / 0.29→0.27(全量贴线)。
+
+**可行性**: stage0 已 TP2+FULL_AND_PIECEWISE 图捕获正常; Talker hidden 经 RowParallel 完整,
+采样无需 gather; die1 显存充足。
+
+**障碍**:
+1. HCCL 网卡端口 16666 独占(单卡单网卡, 多组互斥) → 需 stage0/stage1 共享一个 HCCL 组
+   (或错峰/复用)—— vllm-omni stage 初始化重构(数天)
+2. stage1-r0 绑定 die1 时设备上下文空指针(C81) → vllm-ascend device 绑定修复
+3. 精度全量重验(理论零变化, 需坐实)
+
+**优先级**: 低(收益与方案 A 相当, 工程量 5-10 倍)。
