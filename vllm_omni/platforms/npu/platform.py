@@ -42,11 +42,15 @@ class NPUOmniPlatform(OmniPlatform, NPUPlatform):
         from vllm_omni.platforms.npu.models.qwen3_tts_tokenizer_v2 import (
             apply_qwen3_tts_tokenizer_v2_patch,
         )
+        from vllm_omni.platforms.npu.quant.w8a8_scale_fp32 import (
+            apply_w8a8_scale_fp32_patch,
+        )
 
         adapt_patch(is_global_patch=True)
         apply_qwen3_tts_code2wav_patch()
         apply_qwen3_tts_tokenizer_v2_patch()
         apply_310p_patches()
+        apply_w8a8_scale_fp32_patch()
 
     @classmethod
     def set_device(cls, device: torch.device) -> None:
