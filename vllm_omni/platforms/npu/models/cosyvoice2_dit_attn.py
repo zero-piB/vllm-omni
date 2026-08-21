@@ -146,6 +146,101 @@ def _disable_upsample_encoder_compile() -> None:
     logger.info("Disabled torch.compile on CosyVoice2 UpsampleConformerEncoderV2.forward_chunk (Ascend eager)")
 
 
+def _npu_modulate(x: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
+    """Fuse ``x * (1 + scale) + shift`` into a single addcmul kernel."""
+    return torch.addcmul(shift, x, 1 + scale)
+
+
+def apply_c67_modulate_fusion() -> None:
+    """Fuse the DiT adaLN ``modulate`` path into one addcmul kernel.
+
+    ``modulate`` is the single entry point for all DiT adaLN paths (7 call
+    sites: 3 in DiTBlock.forward_chunk, 3 in DiTBlock.forward, 1 in
+    FinalLayer.forward); replacing the module-level function covers all of
+    them. ``1 + scale`` is computed inline instead of being folded into the
+    adaLN table: folding would require table-semantics changes plus patching
+    the non-streaming DiTBlock.forward and FinalLayer.forward, with
+    silent-miscompute risk.
+
+    NOTE: must run after ``cosyvoice2.flow.decoder_dit`` is imported
+    (i.e. after model load); MiniCPM-o's BatchedToken2Wav bypasses
+    ``npu_token2wav_sdpa_context``, so this is wired into
+    ``_patched_ensure_models_loaded`` instead of ``apply_cosyvoice2_dit_attn_npu_patch``.
+    """
+    try:
+        from cosyvoice2.flow import decoder_dit
+    except ImportError:
+        logger.debug("cosyvoice2 not installed; skip modulate fusion")
+        return
+
+    decoder_dit.modulate = _npu_modulate  # type: ignore[method-assign]
+    logger.info("Applied DiT modulate addcmul fusion (NPU)")
+
+
+def _patched_block_forward_chunk(
+    self,
+    x: torch.Tensor,
+    c: torch.Tensor,
+    cnn_cache: torch.Tensor | None = None,
+    att_cache: torch.Tensor | None = None,
+    mask: torch.Tensor | None = None,
+    adalaLN_cache: torch.Tensor | None = None,
+):
+    """DiTBlock.forward_chunk with gate-residual fused via addcmul.
+
+    ``x = x + gate * out`` (3 sites per block) is two kernels (Mul + Add);
+    ``torch.addcmul(x, out, gate)`` is one, numerically ``x + gate*out``.
+    The body is verbatim upstream except those three lines; ``modulate``
+    resolves to the C67-patched module function at call time.
+    """
+    from cosyvoice2.flow import decoder_dit
+
+    if adalaLN_cache is not None:
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp, shift_conv, scale_conv, gate_conv = adalaLN_cache
+    else:
+        (
+            shift_msa,
+            scale_msa,
+            gate_msa,
+            shift_mlp,
+            scale_mlp,
+            gate_mlp,
+            shift_conv,
+            scale_conv,
+            gate_conv,
+        ) = self.adaLN_modulation(c).chunk(9, dim=-1)
+    mod = decoder_dit.modulate
+    x_att, new_att_cache = self.attn.forward_chunk(mod(self.norm1(x), shift_msa, scale_msa), att_cache, mask)
+    x = torch.addcmul(x, x_att, gate_msa)
+    x_conv, new_cnn_cache = self.conv.forward_chunk(mod(self.norm3(x), shift_conv, scale_conv), cnn_cache)
+    x = torch.addcmul(x, x_conv, gate_conv)
+    x = torch.addcmul(x, self.mlp(mod(self.norm2(x), shift_mlp, scale_mlp)), gate_mlp)
+    return x, new_cnn_cache, new_att_cache
+
+
+def apply_c74_gate_residual_fusion() -> None:
+    """Fuse DiT gate-residual ``x + gate*out`` into addcmul (3 per block).
+
+    Every DiTBlock (7 per step, 3 steps per chunk, ~24 chunks/req -> ~500
+    block executions) does three ``x = x + gate*out`` pairs (attention/conv/
+    mlp residuals) = 6 elementwise kernels -> 3 addcmul kernels. Saves ~1500
+    kernels/request of host launch + per-call overhead. Must run after model
+    load like ``apply_c67_modulate_fusion`` (wired into
+    ``_patched_ensure_models_loaded``).
+    """
+    try:
+        from cosyvoice2.flow import decoder_dit
+    except ImportError:
+        logger.debug("cosyvoice2 not installed; skip gate-residual fusion")
+        return
+
+    block_cls = getattr(decoder_dit, "DiTBlock", None)
+    if block_cls is None:
+        return
+    block_cls.forward_chunk = _patched_block_forward_chunk  # type: ignore[method-assign]
+    logger.info("Applied DiT gate-residual addcmul fusion (NPU)")
+
+
 def apply_cosyvoice2_dit_attn_npu_patch() -> None:
     """Monkey-patch CosyVoice2 DiT Attention for Ascend FA mask constraints."""
     global _PATCHED

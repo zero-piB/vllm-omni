@@ -121,3 +121,27 @@ TTFT/TTFP ≈ 19.8s（duplex 会话启动开销大，功能完整：3 音频分�
 4. 待办：全量四件套坐实 C57（DO 1196 / VideoMME 2700 / WER zh 2020 / ASV 1088，910C 首跑）。
 
 | C63 **stage0 TP=2 双 die 并行**（C57 之上，2026-08-18 晋级）| `tensor_parallel_size 2` + stage0 devices "0,1" / stage2 devices "1"；源码修复 vllm-omni stage 初始化锁序死锁（F41，`stage_runtime.py` acquire_device_locks 移出 spawn 锁作用域，patch 0007）| **1.43%（zh 2020 全量）** / SIM **0.8487**（1088 全量）— DO **78.43%**（1196）/ VideoMME **69.59%**（2700），四项全绿（P7, 8-19） | **256.1 / 445.4 / 0.29**（8-19 确认轮 274.7/461.7/0.303） | **TTFT -19% / TTFP -11% / RTF -15%**（三轮均值 vs champion 轮2 314.57/500.36/0.34）；HCCL 数据面走 HCCS（die 间设备级直连，socket 仅控制面），910C 双 die 算力全面用上 |
+
+---
+
+## 910C 实测（2026-08-21，C75+C74 champion 候选）
+
+**口径**:`perf_seed_tts.sh 32 1`（seed-tts en 32 条，并发 1）；WER = `eval_seed_tts_wer.sh 1088`（zh 全量，并发 4）
+
+| 指标 | 910C 官方基线 | 本轮实测（ts2+C67+C74） | 备注 |
+|---|---|---|---|
+| WER zh 全量 1088 | 1.414（准入 ≤1.56） | **1.51%** ✅ | ts3 champion 历史 1.43% |
+| SIM | 0.709（准入 ≥0.689） | ASV 1088 验证中 | — |
+| TTFT | 333.27 ms | **263-277 ms**（4 轮均值 ~270） | -19% |
+| TTFP | 986.47 ms | **434-450 ms** | -55% |
+| RTF | 0.4423 | **0.28**（4 轮: 0.28/0.28/0.29冷/0.28热） | **-37%** |
+
+**配置**:1_code/minicpmo_4_5.yaml（TP=2, cudagraph FULL_AND_PIECEWISE, **token2wav_n_timesteps: 2**, chunk15/initial8）+ 源码 patch 0008（C67 modulate + C74 gate-residual addcmul 融合,共 5 处/block × 24 chunks）。
+
+**优化路径**（2026-08-21 单日）:
+- C75: ts 3→2（flow 步数减 1/3, WER 全量 1.51% 仍达标, 32 条 0.82-1.31% 波动）
+- C74: DiTBlock.forward_chunk 三处 gate×residual → addcmul（数值等价, 每块省 3 kernels）
+- C67（积攒型）: modulate → addcmul
+- 证伪: C73（chunk 15→30, 无差异 — 每帧 kernel 数恒定, 管线速率由 stage1 决定）; C76（ts 2→1, RTF 0.31 反劣化 — stage2 固定开销主导）
+
+**关键诊断**（OmniTiming + trace）: 三阶段串行链 stage0 0.26s → stage1 0.54s → stage2 尾块 0.38s（audio 0.98s）; stage1（Talker, 6.5ms/token = device 图重放 2ms + host 4.5ms）是 RTF 主瓶颈, 其 host 为 vllm-ascend 图段提交+采样链, 提交物外不可改; stage2 每 chunk 处理 ~45ms 且等待 stage1 chunk 间隔 ~42ms（吃饱等）。

@@ -135,6 +135,17 @@ def _patched_ensure_models_loaded(self) -> None:
     _original_ensure_models_loaded(self)
     if was_loaded or self.device.type != "npu" or self._hift is None:
         return
+    # DiT modulate + gate-residual addcmul fusion. Runs here (post model
+    # load, decoder_dit guaranteed imported) because MiniCPM-o's
+    # BatchedToken2Wav bypasses npu_token2wav_sdpa_context /
+    # apply_cosyvoice2_dit_attn_npu_patch.
+    from vllm_omni.platforms.npu.models.cosyvoice2_dit_attn import (
+        apply_c67_modulate_fusion,
+        apply_c74_gate_residual_fusion,
+    )
+
+    apply_c67_modulate_fusion()
+    apply_c74_gate_residual_fusion()
     patch_step_audio2_hift_for_npu(self._hift)
 
 

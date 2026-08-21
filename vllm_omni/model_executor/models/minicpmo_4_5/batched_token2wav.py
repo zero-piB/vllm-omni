@@ -308,7 +308,8 @@ class BatchedToken2Wav(nn.Module):
             )
             conditional, unconditional = estimate.split(batch_size, dim=0)
             velocity = (1.0 + decoder.inference_cfg_rate) * conditional - decoder.inference_cfg_rate * unconditional
-            x = x + dt * velocity
+            # Fuse x + dt*velocity (Mul + Add) into a single addcmul kernel.
+            x = torch.addcmul(x, velocity, dt)
             time = time + dt
             if step + 1 < self.n_timesteps:
                 dt = timeline[step + 2] - time[0]
